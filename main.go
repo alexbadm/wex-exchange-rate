@@ -5,17 +5,61 @@ import (
 	"strings"
 	"time"
 
+	"fmt"
+	"net/http"
+
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+
 	"github.com/kelseyhightower/envconfig"
 	"github.com/thrasher-/gocryptotrader/exchanges/wex"
 )
 
 type Specification struct {
-	Debug      bool
-	Port       int
-	Users      []string
-	Rate       float32
-	Timeout    string `deafult:"2s"`
-	ColorCodes map[string]int
+	Port    string `default:"4000"`
+	Timeout string `deafult:"2s"`
+	Dbuser  string `default:"postgres"`
+	Dbhost  string `default:"192.168.2.4"`
+	Dbname  string `default:"wex"`
+	Dbport  string `default:"32769"`
+}
+
+var storage *Storage
+
+func Index(w http.ResponseWriter, r *http.Request) {
+	if storage == nil || storage.db == nil {
+		w.Write([]byte("storage not started"))
+		return
+	}
+	data, err := storage.GetLastAverage(10 * time.Minute)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	dataStrings := make([]string, 0, len(data))
+	for _, d := range data {
+		dataStrings = append(dataStrings, d.Marshal())
+	}
+	json := "[" + strings.Join(dataStrings, ",") + "]"
+	w.Write([]byte(json))
+
+	/* Alternative approach below */
+	// d, err := json.Marshal(data)
+	// if err != nil {
+	// 	w.WriteHeader(http.StatusInternalServerError)
+	// 	return
+	// }
+	// w.Write(d)
+}
+
+type LastPricesAvg struct {
+	Pair    string  `db:"pair" json:"pair"`
+	LastAvg float64 `db:"last_avg" json:"last_avg"`
+}
+
+func (lp *LastPricesAvg) Marshal() string {
+	return fmt.Sprintf(`["%s",%f]`, lp.Pair, lp.LastAvg)
 }
 
 func main() {
@@ -28,9 +72,21 @@ func main() {
 	tickerInterval, err := time.ParseDuration(s.Timeout)
 	if err != nil {
 		log.Printf("Warning: failed to parse Timeout environment variable: %v", err.Error())
-		log.Print("Set timeout to '2s'")
-		tickerInterval = 2 * time.Second
 	}
+	var defaultTimeout = 2 * time.Second
+	if tickerInterval < defaultTimeout {
+		log.Print("Set timeout to '2s'")
+		tickerInterval = defaultTimeout
+	}
+
+	storage = new(Storage)
+	storage.db, err = sqlx.Connect("postgres", fmt.Sprintf("user=%s host=%s port=%s dbname=%s sslmode=disable", s.Dbuser, s.Dbhost, s.Dbport, s.Dbname))
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	http.HandleFunc("/", Index)
+	go http.ListenAndServe(":"+s.Port, nil)
 
 	api := wex.WEX{}
 	api.SetDefaults()
@@ -45,15 +101,18 @@ func main() {
 	}
 	allPairsString := strings.Join(pairs, "-")
 
-	// log.Print(allPairsString)
-	// log.Printf("pairs: %d\n", len(info.Pairs))
-
+	var ticker map[string]wex.Ticker
 	for true {
-		tickers, err := api.GetTicker(allPairsString)
+		ticker, err = api.GetTicker(allPairsString)
 		if err != nil {
-			log.Printf("error: %v", err)
+			log.Printf("Failed to get ticker: %v", err)
 		}
-		log.Printf("tickers: %+v\n", tickers)
+		log.Print("tick")
+		// log.Printf("ticker: %+v\n", ticker)
+		err = storage.SaveTicker(ticker)
+		if err != nil {
+			log.Printf("Storage save ticker error: %v", err)
+		}
 		time.Sleep(tickerInterval)
 	}
 }
