@@ -16,12 +16,13 @@ import (
 )
 
 type Specification struct {
-	Port    string `default:"4000"`
-	Timeout string `deafult:"2s"`
-	Dbuser  string `default:"postgres"`
-	Dbhost  string `default:"192.168.2.4"`
-	Dbname  string `default:"wex"`
-	Dbport  string `default:"32769"`
+	Port       string `default:"4000"`
+	Timeout    string `deafult:"2s"`
+	Dbuser     string `default:"postgres"`
+	Dbpassword string `default:"postgres"`
+	Dbhost     string `default:"127.0.0.1"`
+	Dbname     string `default:"wex"`
+	Dbport     string `default:"32768"`
 }
 
 var storage *Storage
@@ -80,7 +81,8 @@ func main() {
 	}
 
 	storage = new(Storage)
-	storage.db, err = sqlx.Connect("postgres", fmt.Sprintf("user=%s host=%s port=%s dbname=%s sslmode=disable", s.Dbuser, s.Dbhost, s.Dbport, s.Dbname))
+	storage.db, err = sqlx.Connect("postgres", fmt.Sprintf("user=%s password=%s host=%s port=%s dbname=%s sslmode=disable",
+		s.Dbuser, s.Dbpassword, s.Dbhost, s.Dbport, s.Dbname))
 	if err != nil {
 		log.Fatal(err.Error())
 	}
